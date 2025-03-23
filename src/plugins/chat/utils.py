@@ -260,9 +260,15 @@ def split_into_sentences_w_remove_punctuation(text: str) -> List[str]:
 
     # print(f"处理前的文本: {text}")
 
-    # 统一将英文逗号转换为中文逗号
-    text = text.replace(",", "，")
-    text = text.replace("\n", " ")
+    # 检查是否为西文字符段落
+    if not is_western_paragraph(text):
+        # 当语言为中文时，统一将英文逗号转换为中文逗号
+        text = text.replace(",", "，")
+        text = text.replace("\n", " ")
+    else:
+        # 用"|seg|"作为分割符分开
+        text = re.sub(r"([.!?]) +", r"\1\|seg\|", text)
+        text = text.replace("\n", "\|seg\|")
     text, mapping = protect_kaomoji(text)
     # print(f"处理前的文本: {text}")
 
@@ -285,21 +291,29 @@ def split_into_sentences_w_remove_punctuation(text: str) -> List[str]:
     for sentence in sentences:
         parts = sentence.split("，")
         current_sentence = parts[0]
-        for part in parts[1:]:
-            if random.random() < split_strength:
+        if  not is_western_paragraph(current_sentence):
+            for part in parts[1:]:
+                if random.random() < split_strength:
+                    new_sentences.append(current_sentence.strip())
+                    current_sentence = part
+                else:
+                    current_sentence += "，" + part
+            # 处理空格分割
+            space_parts = current_sentence.split(" ")
+            current_sentence = space_parts[0]
+            for part in space_parts[1:]:
+                if random.random() < split_strength:
+                    new_sentences.append(current_sentence.strip())
+                    current_sentence = part
+                else:
+                    current_sentence += " " + part
+        else:
+            # 处理分割符
+            space_parts = current_sentence.split("\|seg\|")
+            current_sentence = space_parts[0]
+            for part in space_parts[1:]:
                 new_sentences.append(current_sentence.strip())
                 current_sentence = part
-            else:
-                current_sentence += "，" + part
-        # 处理空格分割
-        space_parts = current_sentence.split(" ")
-        current_sentence = space_parts[0]
-        for part in space_parts[1:]:
-            if random.random() < split_strength:
-                new_sentences.append(current_sentence.strip())
-                current_sentence = part
-            else:
-                current_sentence += " " + part
         new_sentences.append(current_sentence.strip())
     sentences = [s for s in new_sentences if s]  # 移除空字符串
     sentences = recover_kaomoji(sentences, mapping)
@@ -308,10 +322,12 @@ def split_into_sentences_w_remove_punctuation(text: str) -> List[str]:
     sentences_done = []
     for sentence in sentences:
         sentence = sentence.rstrip("，,")
-        if random.random() < split_strength * 0.5:
-            sentence = sentence.replace("，", "").replace(",", "")
-        elif random.random() < split_strength:
-            sentence = sentence.replace("，", " ").replace(",", " ")
+        # 西文字符句子不进行随机合并
+        if  not is_western_paragraph(current_sentence):
+            if random.random() < split_strength * 0.5:
+                sentence = sentence.replace("，", "").replace(",", "")
+            elif random.random() < split_strength:
+                sentence = sentence.replace("，", " ").replace(",", " ")
         sentences_done.append(sentence)
 
     logger.debug(f"处理后的句子: {sentences_done}")
@@ -347,7 +363,11 @@ def random_remove_punctuation(text: str) -> str:
 
 def process_llm_response(text: str) -> List[str]:
     # processed_response = process_text_with_typos(content)
-    if len(text) > 100:
+    # 对西文字符段落的回复长度设置为汉字字符的两倍
+    if len(text) > 100 and not is_western_paragraph(text) :
+        logger.warning(f"回复过长 ({len(text)} 字符)，返回默认回复")
+        return ["懒得说"]
+    elif len(text) > 200 :
         logger.warning(f"回复过长 ({len(text)} 字符)，返回默认回复")
         return ["懒得说"]
     # 处理长消息
@@ -509,3 +529,13 @@ def recover_kaomoji(sentences, placeholder_to_kaomoji):
             sentence = sentence.replace(placeholder, kaomoji)
         recovered_sentences.append(sentence)
     return recovered_sentences
+
+  
+def is_western_char(char):
+    """检测是否为西文字符"""
+    return len(char.encode('utf-8')) <= 2
+
+def is_western_paragraph(paragraph):
+    """检测是否为西文字符段落"""
+    return all(is_western_char(char) for char in paragraph if char.isalnum())
+  
